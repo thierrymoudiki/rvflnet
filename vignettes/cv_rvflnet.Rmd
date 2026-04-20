@@ -1,0 +1,122 @@
+---
+title: "RVFLnet model cross-validation"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{RVFLnet model cross-validation}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r 1-packages}
+library(rvflnet)
+library(glmnet)
+library(MASS)
+```
+
+
+```{r 2-cross-validation}
+set.seed(123)
+
+library(glmnet)
+data(Boston, package = "MASS")
+
+# -------------------------
+# Data
+# -------------------------
+X <- as.matrix(Boston[, -14])
+y <- Boston$medv
+
+n <- nrow(X)
+idx <- sample(1:n, size = round(0.8 * n))
+
+X_train <- X[idx, ]
+y_train <- y[idx]
+
+X_test <- X[-idx, ]
+y_test <- y[-idx]
+
+# -------------------------
+# Grid
+# -------------------------
+grid <- expand.grid(
+  n_hidden = c(175, 200, 225, 250),
+  alpha = seq(0.1, 0.5, by=0.2),
+  include_original = c(TRUE, FALSE),
+  seed = 1,
+  stringsAsFactors = FALSE
+)
+
+results <- vector("list", nrow(grid))
+
+# -------------------------
+# Loop
+# -------------------------
+for (i in seq_len(nrow(grid))) {
+
+  params <- grid[i, ]
+
+  cat("\n========================================\n")
+  cat(sprintf("Run %d / %d\n", i, nrow(grid)))
+  print(params)
+
+  # -------------------------
+  # Fit model
+  # -------------------------
+  fit <- rvflnet(
+    X_train, y_train,
+    n_hidden = params$n_hidden,
+    activation = "sigmoid",
+    W_type = "gaussian",
+    seed = params$seed,
+    include_original = params$include_original,
+    alpha = params$alpha
+  )
+
+  # -------------------------
+  # Evaluate full lambda path
+  # -------------------------
+  lambdas <- fit$fit$lambda
+
+  preds <- predict(fit, newx = X_test, s = lambdas)
+
+  rmse_path <- sqrt(colMeans((preds - y_test)^2))
+
+  best_idx <- which.min(rmse_path)
+
+  best_rmse <- rmse_path[best_idx]
+  best_lambda <- lambdas[best_idx]
+
+  # -------------------------
+  # Sparsity
+  # -------------------------
+  coef_mat <- coef(fit, s = best_lambda)
+  nonzero <- sum(coef_mat[-1, 1] != 0)
+
+  # -------------------------
+  # Verbose output
+  # -------------------------
+  cat(sprintf("Best RMSE: %.4f\n", best_rmse))
+  cat(sprintf("Best lambda: %.6f\n", best_lambda))
+  cat(sprintf("Non-zero coeffs: %d\n", nonzero))
+
+  # -------------------------
+  # Store
+  # -------------------------
+  results[[i]] <- data.frame(
+    n_hidden = params$n_hidden,
+    alpha = params$alpha,
+    include_original = params$include_original,
+    seed = params$seed,
+    rmse = best_rmse,
+    lambda = best_lambda,
+    nonzero = nonzero
+  )
+}
+
+# -------------------------
+# Aggregate
+# -------------------------
+results_df <- do.call(rbind, results)
+(results_df <- results_df[order(results_df$rmse), ])
+```
+

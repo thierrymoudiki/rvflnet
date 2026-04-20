@@ -1,0 +1,308 @@
+---
+title: "RVFLnet model"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{RVFLnet model}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r 0-packages}
+library(rvflnet)
+library(glmnet)
+library(MASS)
+```
+
+# 1 - Regression
+
+# 1 - 1 Regression on `Boston` data set
+
+```{r 1-regression-1, fig.width=7}
+set.seed(123)
+
+# -------------------------
+# Data
+# -------------------------
+
+X <- as.matrix(MASS::Boston[, -14])  # predictors
+y <- MASS::Boston$medv              # response
+
+# Train/test split
+n <- nrow(X)
+idx <- sample(1:n, size = round(0.8 * n))
+
+X_train <- X[idx, ]
+y_train <- y[idx]
+
+X_test <- X[-idx, ]
+y_test <- y[-idx]
+
+# -------------------------
+# Fit model (No CV)
+# -------------------------
+
+fit <- rvflnet(X_train, y_train, 
+               n_hidden = 200,
+               activation = "sigmoid",
+               W_type = "gaussian")
+plot(fit)
+print(fit)
+head(coef(fit, s = c(0.1, 0.05, 0.01)))
+tail(coef(fit, s = c(0.1, 0.05, 0.01)))
+preds <- predict(fit, newx = X_test, s = c(0.05, 0.03, 0.01))
+print(head(preds))
+sqrt(colMeans((preds - y_test)**2))
+
+# -------------------------
+# Fit model (CV)
+# -------------------------
+cv_model <- cv.rvflnet(
+  X_train, y_train,
+  n_hidden = 200,
+  activation = "sigmoid",
+  W_type = "gaussian",
+  alpha = 0.1,   # elastic net mix
+  nfolds = 5
+)
+
+print(cv_model)
+plot(cv_model)
+print(cv_model$cvfit$lambda.min)
+print(str(cv_model))
+
+# -------------------------
+# Predictions
+# -------------------------
+y_pred <- predict(cv_model, X_test)
+
+# -------------------------
+# Diagnostics
+# -------------------------
+
+# RMSE
+rmse <- sqrt(mean((y_test - y_pred)^2))
+cat("Test RMSE:", rmse, "\n")
+
+# -------------------------
+# Sparsity diagnostics
+# -------------------------
+coef_min <- coef(cv_model, s = "lambda.min")
+
+nonzero <- sum(coef_min[-1, 1] != 0)
+cat("Non-zero coefficients:", nonzero, "\n")
+
+# Optional: inspect how many come from original vs hidden
+p <- ncol(X_train)
+orig_nz <- sum(coef_min[2:(p+1), 1] != 0)
+hidden_nz <- sum(coef_min[(p+2):length(coef_min), 1] != 0)
+
+cat("Original features used:", orig_nz, "\n")
+cat("Hidden features used:", hidden_nz, "\n")
+```
+
+# 1 - 2 Regression on `mtcars` data set
+
+```{r 1-regression-2, fig.width=7}
+set.seed(123)
+
+# -------------------------
+# Data
+# -------------------------
+data(mtcars)
+
+X <- as.matrix(mtcars[, -1])  # predictors
+y <- mtcars$mpg              # response
+
+# Train/test split
+n <- nrow(X)
+idx <- sample(1:n, size = round(0.7 * n))
+
+X_train <- X[idx, ]
+y_train <- y[idx]
+
+X_test <- X[-idx, ]
+y_test <- y[-idx]
+
+# -------------------------
+# Fit model (CV)
+# -------------------------
+cv_model <- cv.rvflnet(
+  X_train, y_train,
+  n_hidden = 50,
+  activation = "tanh",
+  W_type = "sobol",
+  alpha = 0.5,   # elastic net mix
+  nfolds = 5
+)
+
+print(cv_model)
+
+# -------------------------
+# Predictions
+# -------------------------
+(y_pred <- predict(cv_model, X_test))
+
+# -------------------------
+# Diagnostics
+# -------------------------
+
+# RMSE
+rmse <- sqrt(mean((y_test - y_pred)^2))
+cat("Test RMSE:", rmse, "\n")
+
+# R-squared
+r2 <- 1 - sum((y_test - y_pred)^2) / sum((y_test - mean(y_test))^2)
+cat("Test R^2:", r2, "\n")
+
+# Residual plot
+plot(y_pred, y_test - y_pred,
+     main = "Residuals vs Predictions",
+     xlab = "Predicted",
+     ylab = "Residuals")
+abline(h = 0, col = "red")
+
+# QQ-plot of residuals
+qqnorm(y_test - y_pred)
+qqline(y_test - y_pred, col = "red")
+
+shapiro.test(y_test - y_pred)
+
+# -------------------------
+# Sparsity diagnostics
+# -------------------------
+(coef_min <- coef(cv_model, s = "lambda.min"))
+
+nonzero <- sum(coef_min[-1, 1] != 0)
+cat("Non-zero coefficients:", nonzero, "\n")
+
+# Optional: inspect how many come from original vs hidden
+p <- ncol(X_train)
+orig_nz <- sum(coef_min[2:(p+1), 1] != 0)
+hidden_nz <- sum(coef_min[(p+2):length(coef_min), 1] != 0)
+
+cat("Original features used:", orig_nz, "\n")
+cat("Hidden features used:", hidden_nz, "\n")
+```
+
+# 2 Classification
+
+# 2 - 1 Binary classification
+
+```{r 2-binary-classification, fig.width=7}
+set.seed(123)
+
+data(iris)
+
+# Binary classification: setosa vs others
+y <- ifelse(iris$Species == "setosa", 1, 0)
+X <- as.matrix(iris[, 1:4])
+
+# Train/test split
+n <- nrow(X)
+idx <- sample(1:n, size = round(0.8 * n))
+
+X_train <- X[idx, ]
+y_train <- y[idx]
+
+X_test <- X[-idx, ]
+y_test <- y[-idx]
+
+# -------------------------
+# Fit model
+# -------------------------
+cv_model <- cv.rvflnet(
+  X_train, y_train,
+  n_hidden = 50,
+  activation = "relu",
+  W_type = "gaussian",
+  family = "binomial",
+  nfolds = 5
+)
+
+# -------------------------
+# Predictions (probabilities)
+# -------------------------
+(probs <- predict(cv_model, X_test, type = "response"))
+
+# Convert to class
+y_pred <- ifelse(probs > 0.5, 1, 0)
+
+all.equal(as.numeric(y_pred), as.numeric(predict(cv_model, X_test, type="class")))
+
+# -------------------------
+# Diagnostics
+# -------------------------
+
+# Accuracy
+acc <- mean(drop(y_pred) == y_test)
+cat("Accuracy:", acc, "\n")
+
+# Confusion matrix
+table(Predicted = y_pred, Actual = y_test)
+
+# ROC-style diagnostic (simple)
+plot(probs, jitter(y_test),
+     main = "Predicted probabilities vs true labels",
+     xlab = "Predicted probability",
+     ylab = "True label")
+
+# Sparsity
+(coef_min <- coef(cv_model, s = "lambda.min"))
+cat("Non-zero coefficients:", sum(coef_min[-1, 1] != 0), "\n")
+```
+
+# 2 - 2 multiclass classification
+
+```{r 3-multiclass-classification, fig.width=7}
+set.seed(123)
+
+data(iris)
+
+X <- as.matrix(iris[, 1:4])
+y <- as.integer(iris$Species)  # factor with 3 classes
+
+# Train/test split
+n <- nrow(X)
+idx <- sample(1:n, size = round(0.8 * n))
+
+X_train <- X[idx, ]
+y_train <- y[idx]
+
+X_test <- X[-idx, ]
+y_test <- y[-idx]
+
+# -------------------------
+# Fit model
+# -------------------------
+cv_model <- cv.rvflnet(
+  X_train, y_train,
+  n_hidden = 60,
+  activation = "tanh",
+  W_type = "sobol",
+  family = "multinomial",
+  nfolds = 5
+)
+
+# -------------------------
+# Predictions
+# -------------------------
+(probs <- predict(cv_model, X_test, type = "response"))
+
+# Convert probabilities to class
+#(pred_class <- apply(probs, 1, function(row) colnames(probs)[which.max(row)]))
+(pred_class <- predict(cv_model, X_test, type = "class"))
+
+# -------------------------
+# Diagnostics
+# -------------------------
+
+# Accuracy
+acc <- mean(pred_class == y_test)
+cat("Accuracy:", acc, "\n")
+
+# Confusion matrix
+table(Predicted = pred_class, Actual = y_test)
+
+# Sparsity (note: multinomial returns list per class)
+(coef_min <- coef(cv_model, s = "lambda.min"))
+```

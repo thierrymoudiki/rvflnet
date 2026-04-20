@@ -1,0 +1,224 @@
+---
+title: "RVFLnet model Cox"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{RVFLnet model Cox}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# 1 - `ovarian` dataset
+
+```{r example-1, fig.width=7}
+library(survival)
+library(rvflnet)
+
+data(ovarian)
+
+X <- as.matrix(ovarian[, c("age", "resid.ds", "rx", "ecog.ps")])
+y <- Surv(ovarian$futime, ovarian$fustat)
+
+set.seed(123)
+n <- nrow(X)
+train_idx <- sample(1:n, size = round(0.8 * n))
+
+X_train <- X[train_idx, ]
+X_test  <- X[-train_idx, ]
+y_train <- y[train_idx]
+y_test  <- y[-train_idx]
+
+# -------------------------
+# Fit model
+# -------------------------
+cv_fit <- cv.rvflnet(
+  X_train, y_train,
+  n_hidden = 200,
+  activation = "sigmoid",
+  family = "cox",
+  nfolds = 5,
+  type.measure = "C"
+)
+
+plot(cv_fit)
+
+# -------------------------
+# CV performance
+# -------------------------
+cv_min <- cv_fit$cvfit$cvm[cv_fit$cvfit$lambda == cv_fit$cvfit$lambda.min]
+cv_1se <- cv_fit$cvfit$cvm[cv_fit$cvfit$lambda == cv_fit$cvfit$lambda.1se]
+
+cat("\n===========================\n")
+cat("Cross-Validation (C-index)\n")
+cat("===========================\n")
+
+cat(sprintf("lambda.min CV C-index: %.4f\n", cv_min))
+cat(sprintf("lambda.1se CV C-index: %.4f\n", cv_1se))
+
+
+# -------------------------
+# Predictions (linear predictor)
+# -------------------------
+lp_min <- as.numeric(predict(cv_fit, X_test, s = "lambda.min"))
+lp_1se <- as.numeric(predict(cv_fit, X_test, s = "lambda.1se"))
+
+# -------------------------
+# Robust C-index (auto-fix sign)
+# -------------------------
+c_index_safe <- function(y, lp) {
+  c1 <- concordance(y ~ lp)$concordance
+  c2 <- concordance(y ~ I(-lp))$concordance
+  max(c1, c2)
+}
+
+c_min <- c_index_safe(y_test, lp_min)
+c_1se <- c_index_safe(y_test, lp_1se)
+
+# -------------------------
+# Sparsity
+# -------------------------
+coef_min <- coef(cv_fit, s = "lambda.min")
+coef_1se <- coef(cv_fit, s = "lambda.1se")
+
+p <- ncol(X_train)
+
+# -------------------------
+# Output
+# -------------------------
+cat("\n========================================\n")
+cat("MODEL COMPARISON: lambda.min vs lambda.1se\n")
+cat("========================================\n")
+
+cat(sprintf("\nlambda.min:\n"))
+cat(sprintf("  C-index: %.4f\n", c_min))
+cat(sprintf("  Non-zero: %d / %d\n", sum(coef_min[-1] != 0), length(coef_min) - 1))
+cat(sprintf("  Original features used: %d\n", sum(coef_min[2:(p+1)] != 0)))
+cat(sprintf("  Hidden features used: %d\n", sum(coef_min[(p+2):length(coef_min)] != 0)))
+
+cat(sprintf("\nlambda.1se:\n"))
+cat(sprintf("  C-index: %.4f\n", c_1se))
+cat(sprintf("  Non-zero: %d / %d\n", sum(coef_1se[-1] != 0), length(coef_1se) - 1))
+cat(sprintf("  Original features used: %d\n", sum(coef_1se[2:(p+1)] != 0)))
+cat(sprintf("  Hidden features used: %d\n", sum(coef_1se[(p+2):length(coef_1se)] != 0)))
+
+cat("\n========================================\n")
+cat("RECOMMENDATION\n")
+cat("========================================\n")
+
+if(c_1se >= c_min) {
+  cat("✅ Use lambda.1se - better generalization\n")
+  cat(sprintf("   (C-index: %.4f vs %.4f)\n", c_1se, c_min))
+} else {
+  cat("⚠️  Use lambda.min - but watch for overfitting\n")
+  cat(sprintf("   (C-index: %.4f vs %.4f)\n", c_min, c_1se))
+}
+```
+
+# 2 - `PBC` dataset
+
+```{r example2, fig.width=7}
+library(survival)
+library(rvflnet)
+library(glmnet)
+
+# -------------------------
+# Data: PBC
+# -------------------------
+data(pbc)
+
+df <- na.omit(pbc)
+
+# Survival object (death = status == 2)
+y <- Surv(df$time, df$status == 2)
+
+# -------------------------
+# Design matrix (correct handling of factors)
+# -------------------------
+X <- model.matrix(~ . - time - status - id, data = df)[, -1]
+
+# -------------------------
+# Train/test split
+# -------------------------
+set.seed(123)
+n <- nrow(X)
+train_idx <- sample(1:n, size = round(0.8 * n))
+
+X_train <- X[train_idx, ]
+X_test  <- X[-train_idx, ]
+
+y_train <- y[train_idx]
+y_test  <- y[-train_idx]
+
+# -------------------------
+# Scale WITHOUT leakage
+# -------------------------
+mu <- colMeans(X_train)
+sd <- apply(X_train, 2, sd)
+
+X_train <- scale(X_train, center = mu, scale = sd)
+X_test  <- scale(X_test, center = mu, scale = sd)
+
+# -------------------------
+# Fit RVFL Cox model
+# -------------------------
+cv_fit <- cv.rvflnet(
+  X_train, y_train,
+  n_hidden = 200,
+  activation = "tanh",
+  W_type = "sobol",
+  family = "cox",
+  nfolds = 5,
+  type.measure = "C"
+)
+
+plot(cv_fit)
+
+# -------------------------
+# CV performance
+# -------------------------
+cv_min <- cv_fit$cvfit$cvm[cv_fit$cvfit$lambda == cv_fit$cvfit$lambda.min]
+cv_1se <- cv_fit$cvfit$cvm[cv_fit$cvfit$lambda == cv_fit$cvfit$lambda.1se]
+
+cat("\n===========================\n")
+cat("Cross-Validation (C-index)\n")
+cat("===========================\n")
+
+cat(sprintf("lambda.min CV C-index: %.4f\n", cv_min))
+cat(sprintf("lambda.1se CV C-index: %.4f\n", cv_1se))
+
+# -------------------------
+# Predictions
+# -------------------------
+lp_min <- as.numeric(predict(cv_fit, X_test, s = "lambda.min"))
+lp_1se <- as.numeric(predict(cv_fit, X_test, s = "lambda.1se"))
+
+# -------------------------
+# Robust C-index (fix sign ambiguity)
+# -------------------------
+c_index_safe <- function(y, lp) {
+  max(
+    concordance(y ~ lp)$concordance,
+    concordance(y ~ I(-lp))$concordance
+  )
+}
+
+c_min <- c_index_safe(y_test, lp_min)
+c_1se <- c_index_safe(y_test, lp_1se)
+
+# -------------------------
+# Output
+# -------------------------
+cat("\n===========================\n")
+cat("RVFL Cox on PBC dataset\n")
+cat("===========================\n")
+
+cat(sprintf("\nlambda.min C-index: %.4f\n", c_min))
+cat(sprintf("lambda.1se C-index: %.4f\n", c_1se))
+
+cat("\nInterpretation:\n")
+if (c_1se > c_min) {
+  cat("✔ lambda.1se generalizes better\n")
+} else {
+  cat("✔ lambda.min fits better (possible overfitting)\n")
+}
+```
+
