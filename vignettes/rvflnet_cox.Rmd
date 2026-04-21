@@ -115,7 +115,7 @@ if(c_1se >= c_min) {
 
 # 2 - `PBC` dataset
 
-```{r example2, fig.width=7}
+```{r example-2, fig.width=7}
 library(survival)
 library(rvflnet)
 library(glmnet)
@@ -220,5 +220,35 @@ if (c_1se > c_min) {
 } else {
   cat("✔ lambda.min fits better (possible overfitting)\n")
 }
+```
+
+# 3 - `CoxExample` dataset
+
+```{r example-3, fig.width=7}
+library(rvflnet)
+library(survival)
+
+data(CoxExample)
+x <- CoxExample$x
+y <- CoxExample$y
+y[1:5, ]
+y <- Surv(y[, 1], y[, 2])
+fit <- rvflnet(x, y, family = "cox")
+plot(fit)
+head(coef(fit, s = 0.05))
+tail(coef(fit, s = 0.05))
+
+set.seed(1)
+cvfit <- cv.rvflnet(x, y, family = "cox", type.measure = "C")
+plot(cvfit)
+
+cvfit$cvfit$lambda.min
+cvfit$cvfit$lambda.1se
+
+# -------------------------
+# CV performance
+# -------------------------
+(cv_min <- cvfit$cvfit$cvm[cv_fit$cvfit$lambda == cv_fit$cvfit$lambda.min])
+(cv_1se <- cvfit$cvfit$cvm[cv_fit$cvfit$lambda == cv_fit$cvfit$lambda.1se])
 ```
 
