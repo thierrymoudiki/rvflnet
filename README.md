@@ -1,5 +1,7 @@
 # rvflnet
 
+[![Documentation](https://img.shields.io/badge/documentation-is_here-green)](https://techtonique.github.io/rvflnet/index.html)
+
 Implements nonlinear glmnet; Random Vector Functional Link (RVFL) networks
 using glmnet for elastic-net regularized output layer training.
 Supports Gaussian, uniform, and Sobol random projections with 
